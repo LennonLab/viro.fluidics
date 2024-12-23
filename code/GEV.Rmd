@@ -27,195 +27,14 @@ require("grid")
 #require("tidyverse")
 require("bbmle")
 require("evd")
+require("ggplot2")
 ```
 
 # Data
 ```{r}
-# Input the dataset (replace this with your actual data or read from a file)
-data <- read.table(header = TRUE, text = "
-treat germ
-infect 70
-infect 26
-infect 19
-infect 68
-infect 19
-infect 194
-infect 19
-infect 195
-infect 23
-infect 48
-infect 24
-infect 24
-infect 20
-infect 12
-infect 42
-infect 6
-infect 36
-infect 61
-infect 18
-infect 21
-infect 149
-infect 88
-infect 44
-infect NA
-infect 52
-infect 60
-infect 35
-infect 271
-infect 20
-infect 31
-infect 103
-infect 88
-infect 21
-infect 24
-infect 108
-infect 22
-infect 102
-infect 16
-infect 50
-infect 105
-infect 84
-infect 176
-infect 14
-infect 39
-infect 33
-infect 23
-infect 17
-infect 27
-infect 39
-infect 31
-infect 32
-infect 20
-infect 21
-infect 153
-infect 49
-infect 49
-infect 203
-infect 33
-infect 24
-infect 64
-infect 31
-infect 28
-infect 26
-infect 120
-infect 24
-infect NA
-infect 65
-infect 30
-infect 28
-infect 25
-infect 119
-infect 24
-infect NA
-infect 23
-infect 15
-infect 19
-infect 366
-infect 35
-infect 73
-infect 67
-infect 48
-infect 57
-infect 49
-infect 52
-infect 15
-infect 21
-infect 380
-infect 107
-infect 111
-infect 24
-infect 352
-infect NA
-infect 86
-infect 31
-infect 21
-infect 201
-infect 23
-infect 32
-control 84
-control NA
-control NA
-control NA
-control 165
-control NA
-control 30
-control NA
-control 183
-control NA
-control 4
-control 44
-control 30
-control 19
-control 12
-control 6
-control 76
-control 4
-control 90
-control NA
-control 4
-control 165
-control 188
-control 30
-control 32
-control 128
-control 39
-control 36
-control 126
-control 19
-control 159
-control 98
-control NA
-control 48
-control 103
-control 4
-control 20
-control 43
-control 109
-control 102
-control 7
-control NA
-control 140
-control 64
-control 36
-control 116
-control 79
-control 20
-control 39
-control 32
-control 139
-control 28
-control NA
-control 53
-control 9
-control 25
-control 54
-control 10
-control 41
-control 66
-control 188
-control 38
-control 118
-control 52
-control 55
-control NA
-control 101
-control 35
-control 12
-control 173
-control 211
-control 5
-control 25
-control 231
-control 149
-control NA
-control 217
-control 134
-control 50
-control 189
-control 70
-control 117
-")
-
+fluid <- read.csv("data/fluidics.csv", header = TRUE, sep = ",", na.strings = "N/A")
+data <- data.frame(fluid$treat, fluid$germ.time)
+colnames(data) <- c("treat", "germ")
 # Remove rows with NA values
 data <- na.omit(data)
 ```
@@ -256,7 +75,7 @@ gev_likelihood_treatment <- function(shape, location, scale, treat_shape = 0, tr
 # Bounds
 ```{r}
 # Adjust bounds for each model
-base_lower <- list(shape = -0.2, location = 10, scale = 5)
+base_lower <- list(shape = -0.2, location = 5, scale = 5)
 base_upper <- list(shape = 0.2, location = 300, scale = 100)
 
 # Extended bounds for treatment effects
@@ -360,28 +179,65 @@ anova(models[["Location Affected"]], models[["All Parameters Affected"]])
 
 # Make figure
 ```{r}
+
+# Generate x values for plotting
+x_values <- seq(min(data$germ), max(data$germ), length.out = 500)
+
+
+# Generate density lines for each treatment group
+plot_data <- do.call(rbind, lapply(unique(data$treat), function(treatment) {
+  # Replace these placeholders with actual coefficients from your model
+  shape <- ifelse(treatment == "infect", 0.2, 0.1)  # Example values
+  location <- ifelse(treatment == "infect", mean(data$germ) + 10, mean(data$germ) - 10)  # Example values
+  scale <- ifelse(treatment == "infect", sd(data$germ) * 1.2, sd(data$germ) * 0.8)  # Example values
+
+  # Calculate density for the GEV distribution
+  density <- dgev(x_values, shape = shape, loc = location, scale = scale)
+  
+  # Return a data frame with x, density, and treatment information
+  data.frame(x = x_values, density = density, treat = treatment)  # Use "treat" for consistency
+}))
+
+# Print and save the plot
+
 pdf("GEV_Distributions.pdf", width = 8, height = 6)
-ggplot() +
+
+# Save the plot to a variable
+p <- ggplot() +
   geom_histogram(
-    data = data, aes(x = germ, y = ..density.., fill = Treatment),
+    data = data, aes(x = germ, y = after_stat(density), fill = treat, color = treat),
     bins = 30, position = "identity", alpha = 0.5
   ) +
   geom_line(
-    data = plot_data, aes(x = x, y = density, color = Treatment),
+    data = plot_data, aes(x = x, y = density, color = treat),
     linewidth = 1.2
   ) +
+  scale_fill_manual(
+    values = c("control" = "blue", "infect" = "red"),
+    labels = c("control" = "uninfected", "infect" = "infected")
+  ) +
+  scale_color_manual(
+    values = c("control" = "blue", "infect" = "red"),
+    labels = c("control" = "uninfected", "infect" = "infected")
+  ) +
   labs(
-    title = "Observed Data and Fitted GEV Distributions",
-    x = "Germ Values",
+    title = "Germination Time by Infection Status",
+    x = "Germination Time (minutes)",
     y = "Density",
-    fill = "Treatment",
-    color = "Treatment"
+    fill = "Status",
+    color = "Status"
   ) +
   theme_minimal()
+
+print(p)  # Explicitly render the plot
 dev.off()
 
 # View the saved PDF
-system("open GEV_Distributions.pdf")  # For macOS, use "xdg-open" for Linux or double-click the file manually
+png("GEV_Distributions.png", width = 800, height = 600)
+print(p)
+dev.off()
+system("open GEV_Distributions.pdf")  # For macOS
 
 
 ```
+
