@@ -1,0 +1,176 @@
+---
+title: "Germination fluidics"
+author: "Jay T. Lennon"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+header-includes:
+   - \usepackage{array}
+output: pdf_document
+geometry: margin=2.54cm
+---
+Distribution of events following virospore germination
+
+## Clear workspace and set directory
+
+```{r setup}
+rm(list = ls())
+getwd()
+setwd("~/GitHub/viro.fluidics/")
+```
+
+```{r}
+## Load packages and functions
+library("bbmle")
+library("ggplot2")
+require("png")
+require("dplyr")
+require("grid")
+```
+
+```{r}
+# Data
+```{r}
+fluid <- read.csv("data/fluidics.csv", header = TRUE, sep = ",", na.strings = "N/A")
+data <- data.frame(fluid$treat, fluid$germ.time)
+colnames(data) <- c("treat", "germ")
+# Remove rows with NA values
+data <- na.omit(data)
+```
+
+```{r}
+# Rescale the data for numerical stability
+data$germ_scaled <- scale(data$germ)
+
+# Extended GEV likelihood function with debugging
+gev_likelihood_treatment_debug <- function(shape, location, scale, 
+                                           treat_shape = 0, treat_location = 0, treat_scale = 0) {
+  data$treat_effect <- ifelse(data$treat == "infect", 1, 0)
+  
+  # Compute treatment-adjusted parameters
+  shape_eff <- shape + treat_shape * data$treat_effect
+  location_eff <- location + treat_location * data$treat_effect
+  scale_eff <- scale + treat_scale * data$treat_effect
+
+  if (any(scale_eff <= 0)) return(Inf)
+  max_germ <- max(data$germ_scaled, na.rm = TRUE)
+  if (any(shape_eff < 0 & max_germ > location_eff + scale_eff / abs(shape_eff))) return(Inf)
+
+  ll <- tryCatch({
+    sum(mapply(
+      function(x, loc, sc, sh) {
+        if (sc <= 0) return(Inf)
+        dgev(x, shape = sh, loc = loc, scale = sc, log = TRUE)
+      },
+      x = data$germ_scaled,
+      loc = location_eff,
+      sc = scale_eff,
+      sh = shape_eff
+    ), na.rm = TRUE)
+  }, error = function(e) Inf)
+
+  if (!is.finite(ll)) return(Inf)
+  -ll
+}
+```
+
+
+# Define parameter bounds
+```{r}
+base_lower <- list(shape = -2, location = -3, scale = 0.01)
+base_upper <- list(shape = 2, location = 3, scale = 10)
+treat_lower <- c(base_lower, treat_shape = -1, treat_location = -1, treat_scale = -1)
+treat_upper <- c(base_upper, treat_shape = 1, treat_location = 1, treat_scale = 1)
+```
+
+
+# Fit models
+```{r}
+fit_null <- mle2(gev_likelihood_treatment_debug,
+                 start = list(shape = 0.1, location = mean(data$germ_scaled), scale = sd(data$germ_scaled)),
+                 method = "Nelder-Mead",
+                 control = list(maxit = 2000))
+
+fit_full <- mle2(gev_likelihood_treatment_debug,
+                 start = list(shape = 0.1, location = mean(data$germ_scaled), scale = sd(data$germ_scaled),
+                              treat_shape = 0, treat_location = 0, treat_scale = 0),
+                 method = "Nelder-Mead",
+                 control = list(maxit = 2000))
+```
+
+```{r}
+# Extract fitted parameters from the best model
+fitted_params <- coef(fit_full)
+
+# Back-transform fitted parameters to the original scale
+shape_infect <- fitted_params["shape"] + fitted_params["treat_shape"]
+location_infect <- fitted_params["location"] + fitted_params["treat_location"]
+scale_infect <- fitted_params["scale"] + fitted_params["treat_scale"]
+
+shape_control <- fitted_params["shape"]
+location_control <- fitted_params["location"]
+scale_control <- fitted_params["scale"]
+
+# Create data for GEV density lines
+x_values <- seq(min(data$germ), max(data$germ), length.out = 500)
+infect_density <- dgev((x_values - mean(data$germ)) / sd(data$germ), 
+                       shape = shape_infect, loc = location_infect, scale = scale_infect) / sd(data$germ)
+control_density <- dgev((x_values - mean(data$germ)) / sd(data$germ), 
+                        shape = shape_control, loc = location_control, scale = scale_control) / sd(data$germ)
+```
+
+# Create a dataframe for the density lines
+```{r}
+density_data <- data.frame(
+  x = rep(x_values, 2),
+  density = c(infect_density, control_density),
+  treat = rep(c("infected", "uninfected"), each = length(x_values))
+)
+```
+
+
+# Plot histograms with GEV fits
+```{r}
+
+png(filename = "~/GitHub/viro.fluidics/plots/GVE.png",
+    width = 1200, height = 1200, res = 96 * 2)
+
+plot <- ggplot() +
+  geom_histogram(data = subset(data, treat == "control"), aes(x = germ, y = ..density..), 
+                 fill = "red", alpha = 0.5, bins = 30, color = "black") +  # Uninfected histogram
+  geom_histogram(data = subset(data, treat == "infect"), aes(x = germ, y = ..density..), 
+                 fill = "blue", alpha = 0.5, bins = 30, color = "black") +  # Infected histogram
+  geom_line(data = density_data, aes(x = x, y = density, color = treat), 
+            linewidth = 0.85, linetype = "solid") +  # Dashed lines added
+  scale_color_manual(values = c("infected" = "blue", "uninfected" = "red"),
+                     labels = c("infected", "uninfected")) +
+  labs(x = "Germination time (min)", y = "Density") +
+  theme_minimal() +
+theme(
+  legend.title = element_blank(),                    # Remove legend title
+  legend.text = element_text(size = 14),             # Increase legend text size
+  legend.position = c(0.5, 0.85),                    # Move legend to the top
+  legend.justification = "center",                   # Center-align legend
+  panel.grid = element_blank(),                      # Remove gridlines
+  axis.line = element_line(color = "black", linewidth = 0.8), # Axis lines
+  axis.ticks = element_line(color = "black", linewidth = 0.8), # Tick marks
+  axis.ticks.length = unit(0.4, "cm"),               # Double tick mark length
+  axis.title.x = element_text(size = 16, margin = margin(t = 25)), # Combine size and margin for x-axis title
+  axis.title.y = element_text(size = 16, margin = margin(r = 25)), # Combine size and margin for y-axis title
+  axis.text.x = element_text(size = 14),
+  axis.text.y = element_text(size = 14),
+  legend.key = element_rect(fill = NA, color = NA),  # Remove legend symbol borders
+  plot.margin = margin(20, 20, 20, 20)               # Add more buffer space
+)
+
+
+# Print the plot to the PNG device
+print(plot)
+
+# Close the device
+dev.off()
+
+# Display the saved image in RStudio
+img <- readPNG("~/GitHub/viro.fluidics/plots/GVE.png")
+grid.raster(img)
+```
+
+
