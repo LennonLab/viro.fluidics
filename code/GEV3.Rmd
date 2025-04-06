@@ -24,6 +24,8 @@ library("ggplot2")
 require("png")
 require("dplyr")
 require("grid")
+library("fitdistrplus")
+
 ```
 
 # Load data
@@ -34,6 +36,51 @@ colnames(data) <- c("treat", "germ")
 # Remove rows with NA values
 data <- na.omit(data)
 ```
+
+```{r}
+# Fit the Weibull distribution
+weibull_fit <- fitdist(data$germ, "weibull")
+
+# View fit summary
+summary(weibull_fit)
+
+# Extract parameters from the fitted Weibull distribution
+shape <- weibull_fit$estimate["shape"]
+scale <- weibull_fit$estimate["scale"]
+
+# Generate a sequence of values for plotting the Weibull density
+x_vals <- seq(min(data$germ), max(data$germ), length.out = 1000)
+weibull_density <- dweibull(x_vals, shape = shape, scale = scale)
+
+
+png(filename = "~/GitHub/viro.fluidics/plots/GVE3.png",
+    width = 1200, height = 800, res = 96 * 2)
+
+
+# Plot histogram of the data
+# Define a transparent color
+transparent_blue <- rgb(0.4, 0.7, 1, alpha = 0.75)  
+
+hist(data$germ, breaks = 30, prob = TRUE, col = transparent_blue, border = "black",
+     main = "", xlab = "Germination time (min)", ylab = "", las = 1,  ylim = c(-0.0001, 0.0081),
+     xlim = c(-5, 805))
+box(lwd=2)
+
+mtext("Density", side = 2, line = 4, las = 0) 
+
+# Add Weibull density curve
+lines(x_vals, weibull_density, col = "red", lwd = 4)
+
+# Close the device
+dev.off()
+
+# Display the saved image in RStudio
+img <- readPNG("~/GitHub/viro.fluidics/plots/GVE3.png")
+grid.raster(img)
+
+```
+
+
 
 ```{r}
 # Rescale the data for numerical stability
