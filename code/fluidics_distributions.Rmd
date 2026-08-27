@@ -4,11 +4,43 @@ author: "Joy O'Brien"
 date: "2025-04-01"
 output: html_document
 ---
-
+0. Set wd and figure theme
 ```{r setup, include=FALSE}
 setwd("~/GitHub/viro.fluidics")
 ```
 
+```{r}
+library(paletteer)
+library(ggplot2)
+theme_set(theme_classic() +
+  theme(axis.title = element_text(size = 16),
+        axis.title.x = element_text(margin = margin(t = 15, b = 15)),
+        axis.title.y = element_text(margin = margin(l = 15, r = 15)),
+        axis.text = element_text(size = 13),
+        axis.text.x = element_text(margin = margin(t = 5)),
+        axis.text.y = element_text(margin = margin(r = 5)),
+        #axis.line.x = element_line(linewidth = 1),
+        #axis.line.y = element_line(linewidth = 1),
+        axis.ticks.y.right = element_line(linewidth = 1),
+        axis.text.y.right = element_text(size = 13, margin = margin(l = 5)),
+        axis.line.y.right = element_line(linewidth = 0.1),
+        axis.ticks.x.top = element_line(linewidth = 1),
+        axis.text.x.top = element_text(size = 13, margin = margin(b = 5)),
+        axis.line.x.top = element_line(linewidth = 0.1),
+        axis.line.x = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.x = element_line(linewidth = 1),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.ticks.length = unit(.1, "in"),
+        panel.border = element_rect(color = "grey20", fill = NA, linewidth = 1.5),
+        legend.text = element_text(size = 14),
+        strip.text = element_text(size = 14),
+        strip.background = element_blank()
+        )) 
+colors <-paletteer_d("ggthemes::Miller_Stone")
+```
+
+1. Load in data
 ```{r}
 library(dplyr)
 # Read in data
@@ -21,7 +53,7 @@ fluid <- fluid %>%
 
 ```
 
-1. Visualzing the distribution of outcomes
+2. Visualzing the distribution of outcomes
 ```{r}
 # Load libraries
 library(ggplot2) # For plotting
@@ -52,7 +84,6 @@ fluid_summary$treat <- factor(fluid_summary$treat, levels = c("Uninfected", "Inf
 ggplot(fluid_summary, aes(x = spore.fate, y = count, fill = spore.fate)) +
   geom_bar(stat = "identity", alpha = 0.8, color = "black") +
   facet_wrap(~treat) +
-  theme_classic() +
   labs(title = "",
        x = "Outcome",
        y = "Count") +
@@ -62,13 +93,111 @@ ggplot(fluid_summary, aes(x = spore.fate, y = count, fill = spore.fate)) +
         legend.position = "none")
 
 
+# How much more likely are infected spores to germinate than uninfected? 
+library(dplyr)
+library(tidyr)
+
+fold_change <- fluid_summary %>%
+  group_by(treat, spore.fate) %>%
+  summarise(total = sum(count), .groups = "drop") %>%
+  pivot_wider(names_from = treat, values_from = total) %>%
+  mutate(
+    fold_change = Infected / Uninfected,
+    percent_change = (Infected - Uninfected) / Uninfected * 100
+  )
+
+fold_change
+
+
+# chi-square test of independence 
+fate_table <- matrix(
+  c(79, 5, 55,
+    5, 88, 4),
+  nrow = 2,
+  byrow = TRUE
+)
+
+rownames(fate_table) <- c("Uninfected", "Infected")
+colnames(fate_table) <- c("Divided", "Lysed", "Stayed")
+
+chisq.test(fate_table)
+
 
 ```
-2. Looking at how germination time is distributed among infected and uninfected endospores
+3. Express counts as percent (advice from lab meeting)
 ```{r}
-# Let's look at the distribution of germination time in uninfected vs infected cells
 library(ggplot2)
-library(dplyr)
+
+# Summarize counts and calculate percent within each treatment
+fluid_summary.perc <- fluid %>%
+  group_by(treat, spore.fate) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(treat) %>%
+  mutate(percent = count / sum(count) * 100) %>%
+  ungroup()
+
+# Rename treatments
+fluid_summary.perc <- fluid_summary.perc %>%
+  mutate(treat = recode(
+    treat,
+    "control" = "Uninfected",
+    "infect" = "Infected"
+  ))
+
+# CHange the name of the fates
+fluid_summary.perc <- fluid_summary.perc %>%
+  mutate(
+    treat = recode(
+      treat,
+      "control" = "Uninfected",
+      "infect" = "Infected"
+    ),
+    spore.fate = recode(
+      spore.fate,
+      "Lysed" = "Lysed",
+      "Stayed" = "Failed\ngermination",
+      "Divided" = "Outgrowth"
+    )
+  )
+
+# Set facet order
+fluid_summary.perc$treat <- factor(
+  fluid_summary.perc$treat,
+  levels = c("Uninfected", "Infected")
+)
+
+# Plot percentages
+ggplot(fluid_summary.perc,
+       aes(x = spore.fate, y = percent, fill = spore.fate)) +
+  geom_col(alpha = 0.8, color = "black") +
+  facet_wrap(~treat) +
+  labs(
+    title = "",
+    x = "Outcome",
+    y = "Percent of spores (%)"
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Lysed" = "#E63946",
+      "Outgrowth" = "#457B9D",
+      "Failed\ngermination" = "#2A9D8F"
+    )
+  ) +
+  scale_y_continuous(
+    limits = c(0, 100),
+    expand = c(0, 0)
+  ) +
+  theme(
+    text = element_text(size = 16),
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    legend.position = "none"
+  )
+```
+
+
+
+4. Looking at how germination time is distributed among infected and uninfected endospores
+```{r}
 
 # Filter for the infected treatment
 infected_data <- fluid %>% filter(treat == "infect")
@@ -95,6 +224,7 @@ ggplot(control_data, aes(x = germ.time)) +
         plot.title = element_text(hjust = 0.5, face = "bold"))
 
 ```
+
 ```{r}
 # Look at time to first division for the uninfected cells
 control_data$div.frame <- as.numeric(as.character(control_data$div.frame))
@@ -121,7 +251,7 @@ summary(control_data$time_to_div)
 ```
 
 
-3. Test to see if there is a significant difference in germination time (I don't think there is)
+5. Test to see if there is a significant difference in germination time (I don't think there is)
 ```{r}
 # Filter data for control and infected groups
 control_data <- fluid %>% filter(treat == "control") %>% pull(germ.time)
@@ -140,7 +270,7 @@ wilcox.test(germ.time ~ treat, data = fluid)
 
 ```
 
-4. Visualize both uninfected and infected germination time plots (like Jay's code)
+6. Visualize both uninfected and infected germination time plots (like Jay's code)
 ```{r}
 library(ggplot2)
 library(dplyr)
@@ -245,7 +375,7 @@ ggplot(lysis_data, aes(x = lyse.time)) +
 
 
 
-5. Calculate time to lysis from germination time 
+7. Calculate time to lysis from germination time 
 ```{r}
 # Calculate time to lysis for infected treatment only and make a new dataset
 fluid <- fluid %>%
@@ -258,7 +388,6 @@ fluid_infected <- fluid %>%
 
 summary(fluid_infected)
 ```
-
 
 ```{r}
 # Mean Time to division in uninfected spores is 249.4 min
@@ -293,6 +422,7 @@ ggplot(fluid_infected, aes(x = time_to_lysis)) +
         legend.position = "top")
 
 ```
+
 ```{r}
 # Checking to see if there is a significant difference in time to division vs time to lysis 
 shapiro.test(fluid_infected$time_to_lysis) # not normal
@@ -302,7 +432,6 @@ shapiro.test(control_data$time_to_div) # Normal
 wilcox.test(control_data$time_to_div, fluid_infected$time_to_lysis)
 
 ```
-
 
 ```{r}
 # Looks normal 
@@ -335,6 +464,7 @@ qqline(fluid_infected$time_to_lysis, col = "red")
 
 
 ```
+
 ```{r}
 # Running new, clean stats for dissertation proposal (will come back and clean later)
 # Check for normality
