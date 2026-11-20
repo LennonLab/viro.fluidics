@@ -1,0 +1,1872 @@
+---
+title: "virofluidics.analysis"
+author: "Joy O'Brien"
+date: "2026-11-02"
+output: html_document
+---
+0. Set wd
+```{r}
+setwd("~/GitHub/viro.fluidics")
+```
+
+0. Set plot theme
+```{r}
+library(paletteer)
+library(ggplot2)
+theme_set(theme_classic() +
+  theme(axis.title = element_text(size = 16),
+        axis.title.x = element_text(margin = margin(t = 15, b = 15)),
+        axis.title.y = element_text(margin = margin(l = 15, r = 15)),
+        axis.text = element_text(size = 13),
+        axis.text.x = element_text(margin = margin(t = 5)),
+        axis.text.y = element_text(margin = margin(r = 5)),
+        #axis.line.x = element_line(linewidth = 1),
+        #axis.line.y = element_line(linewidth = 1),
+        axis.ticks.y.right = element_line(linewidth = 1),
+        axis.text.y.right = element_text(size = 13, margin = margin(l = 5)),
+        axis.line.y.right = element_line(linewidth = 0.1),
+        axis.ticks.x.top = element_line(linewidth = 1),
+        axis.text.x.top = element_text(size = 13, margin = margin(b = 5)),
+        axis.line.x.top = element_line(linewidth = 0.1),
+        axis.line.x = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.x = element_line(linewidth = 1),
+        axis.ticks.y = element_line(linewidth = 1),
+        axis.ticks.length = unit(.1, "in"),
+        panel.border = element_rect(color = "grey20", fill = NA, linewidth = 1.5),
+        legend.text = element_text(size = 14),
+        strip.text = element_text(size = 14),
+        strip.background = element_blank()
+        )) 
+colors <-paletteer_d("ggthemes::Miller_Stone")
+```
+
+1. Load data from master sheet
+```{r}
+library(readxl)
+fluid.data <- read_excel("~/GitHub/viro.fluidics/data/20261102_1314_virofluidics_mastersheet.xlsx", sheet = "virofluidics.data")
+```
+
+2. Load packages, examine, and filter data
+```{r}
+library(dplyr)
+library(ggplot2)
+
+str(fluid.data)
+
+# Right now, there are only 3 columns relevant to analysis (germinate, lytic.event, MOI)
+table(fluid.data$germinate, useNA = "ifany")
+
+table(fluid.data$lytic.event, useNA = "ifany")
+
+table(fluid.data$MOI, useNA = "ifany")
+
+# Subset out the data that we are currently interested in working with (spore, germinate, time.germinate, lytic.event, MOI, series, batch, infected.control)
+fluid.sub <- fluid.data %>%
+  select(
+    spore,
+    germinate,
+    time.germinate,
+    lytic.event,
+    MOI,
+    series,
+    batch,
+    Infected.control
+  )
+
+glimpse(fluid.sub)
+
+
+table(
+  fluid.sub$Infected.control,
+  fluid.sub$MOI,
+  useNA = "ifany"
+)
+
+# Filter data for treatments of interest
+fluid.filtered <- fluid.sub %>%
+  filter(
+    Infected.control == "control" |
+    (Infected.control == "infected" & MOI == 1)
+  )
+# verify
+table(
+  fluid.filtered$Infected.control,
+  fluid.filtered$MOI,
+  useNA = "ifany"
+)
+
+# For now, only include spores with definitive germination outcome
+fluid.germ <- fluid.filtered %>%
+  filter(germinate %in% c("0", "1"))
+
+# verify 
+table(
+  fluid.germ$Infected.control,
+  fluid.germ$germinate
+)
+```
+3. Initial analysis (given that we only have data for 1 rep for each treatment, we can't push our analysis too far just yet)
+```{r}
+# Subset germinated spores with definitive lysis outcomes
+fluid.lysis <- fluid.filtered %>%
+  filter(
+    germinate == "1",
+    lytic.event %in% c("0", "1")
+  )
+
+
+# Calculate percentage lysis per microscope position
+lysis_summary <- fluid.lysis %>%
+  group_by(Infected.control, batch, series) %>%
+  summarise(
+    total_germinated = n(),
+
+    total_lysed = sum(lytic.event == "1"),
+
+    percent_lysis = 
+      (total_lysed / total_germinated) * 100,
+
+    .groups = "drop"
+  )
+
+
+lysis_plot <- ggplot(
+  lysis_summary,
+  aes(
+    x = Infected.control,
+    y = percent_lysis,
+    fill = Infected.control
+  )
+) +
+  geom_boxplot(
+    width = 0.5,
+    alpha = 0.6,
+    outlier.shape = NA
+  ) +
+  geom_jitter(
+    width = 0.08,
+    size = 2.5,
+    alpha = 0.8
+  ) +
+  scale_fill_manual(
+    values = c(
+      "control" = "#4C78A8",
+      "infected" = "#C44E52"
+    )
+  ) +
+  labs(
+    x = NULL,
+    y = "Lysis (% of germinated spores)"
+  ) +
+  theme(
+    legend.position = "none"
+  )
+lysis_plot
+```
+
+
+```{r}
+# Distribution of germination times 
+
+fluid.germ.time <- fluid.germ %>%
+  filter(
+    germinate == "1",
+    !is.na(time.germinate)
+  )
+
+# Plot distribution using overlapping hist 
+germ.time.hist <- ggplot(
+  fluid.germ.time,
+  aes(
+    x = time.germinate,
+    fill = Infected.control
+  )
+) +
+  geom_histogram(
+    binwidth = 10,
+    position = "identity",
+    alpha = 0.5,
+    color = "black"
+  ) +
+  scale_fill_manual(
+    values = c(
+      "control" = "#4C78A8",
+      "infected" = "#C44E52"
+    )
+  ) +
+  labs(
+    x = "Time to germination (min)",
+    y = "Number of spores",
+    fill = "Treatment"
+  ) 
+
+germ.time.hist
+
+# Plot using density curves
+germ.time.density <- ggplot(
+  fluid.germ.time,
+  aes(
+    x = time.germinate,
+    fill = Infected.control,
+    color = Infected.control
+  )
+) +
+  geom_density(
+    alpha = 0.3,
+    linewidth = 1
+  ) +
+  scale_fill_manual(
+    values = c(
+      "control" = "#4C78A8",
+      "infected" = "#C44E52"
+    )
+  ) +
+  scale_color_manual(
+    values = c(
+      "control" = "#4C78A8",
+      "infected" = "#C44E52"
+    )
+  ) +
+  labs(
+    x = "Time to germination (min)",
+    y = "Density",
+    fill = "Treatment",
+    color = "Treatment"
+  ) 
+
+germ.time.density
+```
+```{r}
+# Plot with 2 min bin width 
+germ.time.hist <- ggplot(
+  fluid.germ.time,
+  aes(
+    x = time.germinate,
+    fill = Infected.control
+  )
+) +
+  geom_histogram(
+    binwidth = 4,
+    boundary = 0,
+    position = "identity",
+    alpha = 0.5,
+    color = "black"
+  ) +
+  scale_fill_manual(
+    values = c(
+      "control" = "#4C78A8",
+      "infected" = "#C44E52"
+    )
+  ) +
+  labs(
+    x = "Time to germination (min)",
+    y = "Number of spores",
+    fill = "Treatment"
+  ) 
+
+germ.time.hist
+
+germ.time.hist +
+  coord_cartesian(xlim = c(0, 100))
+```
+
+####### PART  2: MODEL FITTING ##########
+- We will start off by testing control (uninfected spores) and infected spores separately for model fits
+- We aim to test the following models: Weibull, Logistic, Log logistic, Erlang, Discrete Bernoulli 
+- We want to know: What probability distribution best describes time to germination? 
+- Do infected and uninfected spores exhibit different germ time distributions?
+- What biological info can we extract from fitted models? 
+
+1. Starting only with control spores 
+```{r}
+library(dplyr)
+library(ggplot2)
+
+control_data <- fluid.data %>%
+  filter(
+    Infected.control == "control",
+    germinate == 1,
+    !is.na(time.germinate)
+  )
+
+# Inspect germination times
+summary(control_data$time.germinate)
+
+hist(
+  control_data$time.germinate,
+  breaks = 30,
+  main = "Control spore germination times",
+  xlab = "Time to germination (minutes)"
+)
+
+# Examine times
+summary(control_data$time.germinate)
+
+table(control_data$time.germinate)
+```
+Weibull pre-check
+```{r}
+probabilities <- pweibull(
+  upper,
+  shape = 2,
+  scale = 16
+) -
+  pweibull(
+    lower,
+    shape = 2,
+    scale = 16
+)
+
+# How many probabilities are zero?
+sum(probabilities == 0, na.rm = TRUE)
+
+# Which observations have invalid probabilities?
+data.frame(
+  time = times,
+  lower = lower,
+  upper = upper,
+  probability = probabilities
+) %>%
+  filter(
+    is.na(probability) | probability <= 0
+  )
+```
+
+
+
+2. Weibull
+- the Weibull distribution is a continuous probability distribution commonly used to model time to event data 
+- Unlike the normal distribution, Weibull is defined only for nonnegative times and can accommodate right-skewed observations
+- It has two parameters: shape (k) and scale (lambda)
+- The shape parameter controls how the instantaneous event rate, called the hazard, changes with time
+- The scale parameter controls the timescale over which germination occurs (larger scale means longer germ times)
+- Because our germination data is recorded every 2 min, we are interested in the probability of germination within a particular interval
+```{r}
+# Load libraries
+library(dplyr)
+library(ggplot2)
+library(bbmle)
+# Extract germination times 
+times <- control_data$time.germinate
+
+summary(times)
+
+# Check germination times 
+summary(times)
+
+sum(is.na(times))
+sum(!is.finite(times))
+sum(times == 0, na.rm = TRUE)
+sum(times < 0, na.rm = TRUE)
+
+# We do have a single time of germination as 0 
+# Define observation interval
+library(bbmle)
+
+# Observation interval
+dt <- 2
+
+# Define interval boundaries
+upper <- ifelse(times == 0, dt, times)
+lower <- pmax(0, upper - dt)
+
+# Define negative log liklihood
+weibull_nll <- function(shape, scale) {
+
+  if (shape <= 0 || scale <= 0) {
+    return(1e100)
+  }
+
+  # Log survival at each interval boundary
+  log_S_lower <- pweibull(
+    lower,
+    shape = shape,
+    scale = scale,
+    lower.tail = FALSE,
+    log.p = TRUE
+  )
+
+  log_S_upper <- pweibull(
+    upper,
+    shape = shape,
+    scale = scale,
+    lower.tail = FALSE,
+    log.p = TRUE
+  )
+
+  # Stable log interval probabilities
+  delta <- log_S_upper - log_S_lower
+
+  log_prob <- log_S_lower +
+    log(-expm1(delta))
+
+  if (any(!is.finite(log_prob))) {
+    return(1e100)
+  }
+
+  -sum(log_prob)
+}
+
+weibull_nll(shape = 2, scale = 16)
+
+# Fit Weibull using MLE
+weibull_fit <- mle2(
+  weibull_nll,
+  start = list(
+    shape = 2,
+    scale = median(times)
+  ),
+  method = "L-BFGS-B",
+  lower = c(
+    shape = 0.001,
+    scale = 0.001
+  )
+)
+
+# Results
+summary(weibull_fit)
+
+coef(weibull_fit)
+
+AIC(weibull_fit)
+BIC(weibull_fit) #BIC returns NA, let's calculate manually below
+weibull_fit@details$convergence # 0 
+
+# Calculating BIC
+n <- length(times)
+
+logLik_value <- as.numeric(logLik(weibull_fit))
+
+k <- length(coef(weibull_fit))
+
+BIC_weibull <- -2 * logLik_value + k * log(n)
+
+BIC_weibull
+```
+- Because the shape parameter here (k) = 0.805, the instantaneous germination hazard decreases among spores that have not yet germinated
+# Plot Weibull
+```{r}
+ggplot(control_data, aes(x = time.germinate)) +
+  geom_histogram(
+    aes(y = after_stat(density)),
+    binwidth = 2,
+    fill = "grey80",
+    color = "black"
+  ) +
+  stat_function(
+    fun = dweibull,
+    args = list(
+      shape = coef(weibull_fit)["shape"],
+      scale = coef(weibull_fit)["scale"]
+    ),
+    color = "blue",
+    linewidth = 1
+  ) +
+  labs(
+    x = "Time to germination (min)",
+    y = "Probability density",
+    title = "Weibull fit to control spore germination times"
+  )
+
+# Plot Weibull 
+# Extract fitted Weibull parameters
+weibull_params <- coef(weibull_fit)
+
+# Create 2-minute intervals
+plot_times <- seq(
+  0,
+  max(times) + 2,
+  by = 2
+)
+
+# Calculate predicted probabilities for each interval
+weibull_predictions <- data.frame(
+  time = plot_times[-1]
+) %>%
+  mutate(
+    predicted_prob =
+      pweibull(
+        time,
+        shape = weibull_params["shape"],
+        scale = weibull_params["scale"]
+      ) -
+      pweibull(
+        time - 2,
+        shape = weibull_params["shape"],
+        scale = weibull_params["scale"]
+      ),
+    predicted_count = predicted_prob * length(times)
+  )
+
+# Observed counts
+observed_counts <- data.frame(
+  time = ifelse(times == 0, 2, times)
+) %>%
+  count(time, name = "observed_count")
+
+# Plot
+ggplot() +
+  geom_col(
+    data = observed_counts,
+    aes(x = time, y = observed_count),
+    width = 2,
+    fill = "grey75",
+    color = "black"
+  ) +
+  geom_line(
+    data = weibull_predictions,
+    aes(x = time, y = predicted_count),
+    color = "blue",
+    linewidth = 1
+  ) +
+  labs(
+    title = "Weibull fit to control germination times",
+    x = "Time to germination (minutes)",
+    y = "Number of spores"
+  ) +
+  coord_cartesian(xlim = c(0, 100))
+```
+3. Logistic 
+- Logistic has two parameters: location (u) which determines where the distribution is centered and scale (s) controls how spread out the germiation times are. 
+- we are fitting the model using interval probabilities here 
+- the ordinary logistic distribution is not necessarily well suited for time to event data because it allows negative values
+- the logistic distribution is a continuous probability distribution that resembles the normal distributuon (symmetric, bell shaped, heavier tails)
+
+```{r}
+logistic_nll <- function(location, scale) {
+
+  if (scale <= 0) {
+    return(1e100)
+  }
+
+  log_S_lower <- plogis(
+    lower,
+    location = location,
+    scale = scale,
+    lower.tail = FALSE,
+    log.p = TRUE
+  )
+
+  log_S_upper <- plogis(
+    upper,
+    location = location,
+    scale = scale,
+    lower.tail = FALSE,
+    log.p = TRUE
+  )
+
+  delta <- log_S_upper - log_S_lower
+
+  log_prob <- log_S_lower +
+    log(-expm1(delta))
+
+  if (any(!is.finite(log_prob))) {
+    return(1e100)
+  }
+
+  -sum(log_prob)
+}
+
+# Fit the logistic distribution
+logistic_fit <- mle2(
+  logistic_nll,
+  start = list(
+    location = median(times),
+    scale = sd(times) / 2
+  ),
+  method = "L-BFGS-B",
+  lower = c(
+    location = -Inf,
+    scale = 0.001
+  )
+)
+summary(logistic_fit)
+coef(logistic_fit)
+AIC(logistic_fit)
+BIC(logistic_fit)
+logistic_fit@details$convergence
+
+# Calculate BIC manually since we get NA 
+
+n <- length(times)
+
+BIC_logistic <- -2 * as.numeric(logLik(logistic_fit)) +
+  length(coef(logistic_fit)) * log(n)
+
+BIC_logistic
+```
+
+# Plot logistic
+```{r}
+# Extract fitted logistic parameters
+logistic_params <- coef(logistic_fit)
+
+# Create 2-minute intervals
+plot_times <- seq(
+  0,
+  max(times) + 2,
+  by = 2
+)
+
+# Calculate predicted probability for each interval
+logistic_predictions <- data.frame(
+  time = plot_times[-1]
+) %>%
+  mutate(
+    predicted_prob =
+      plogis(time,
+             location = logistic_params["location"],
+             scale = logistic_params["scale"]) -
+      plogis(time - 2,
+             location = logistic_params["location"],
+             scale = logistic_params["scale"]),
+    predicted_count = predicted_prob * length(times)
+  )
+
+# Observed counts
+observed_counts <- data.frame(
+  time = ifelse(times == 0, 2, times)
+) %>%
+  count(time, name = "observed_count")
+
+# Plot
+ggplot() +
+  geom_col(
+    data = observed_counts,
+    aes(x = time, y = observed_count),
+    width = 2,
+    fill = "grey75",
+    color = "black"
+  ) +
+  geom_line(
+    data = logistic_predictions,
+    aes(x = time, y = predicted_count),
+    color = "blue",
+    linewidth = 1
+  ) +
+  labs(
+    title = "Logistic fit to control germination times",
+    x = "Time to germination (minutes)",
+    y = "Number of spores"
+  ) +
+  coord_cartesian(xlim = c(0, 100))
+```
+4. Log logistic 
+- log logistic distribution can describe a germination hazard that initially increases and then decreases (which is most consistent with observed data)
+- log logistic distribution is a continuous probability distribution used to model positive-values time to event data 
+- this is useful to test because we have non-negative times, strongly right skewed data, and a long tail 
+- It contains two parameters: shape (alpha) controls the shape of the distribution and how the hazard changes over time, 
+scale (beta) determines the timescale and equals the median germination time
+- in this case the hazard means the instantaneous germination rate among spores that have not yet germinated
+- Important to keep in mind here: the dataset only contains spores that have germinated, and so the fitted distributions describe germination timing among observed germinators, not the probability that any spore will eventually germinate
+```{r}
+# Define function
+loglogistic_nll <- function(shape, scale) {
+
+  if (shape <= 0 || scale <= 0) {
+    return(1e100)
+  }
+
+  log_S_lower <- plogis(
+    log(lower),
+    location = log(scale),
+    scale = 1 / shape,
+    lower.tail = FALSE,
+    log.p = TRUE
+  )
+
+  log_S_upper <- plogis(
+    log(upper),
+    location = log(scale),
+    scale = 1 / shape,
+    lower.tail = FALSE,
+    log.p = TRUE
+  )
+
+  delta <- log_S_upper - log_S_lower
+
+  log_prob <- log_S_lower +
+    log(-expm1(delta))
+
+  if (any(!is.finite(log_prob))) {
+    return(1e100)
+  }
+
+  -sum(log_prob)
+}
+
+# Fit 
+loglogistic_fit <- mle2(
+  loglogistic_nll,
+  start = list(
+    shape = 2,
+    scale = median(times)
+  ),
+  method = "L-BFGS-B",
+  lower = c(
+    shape = 0.001,
+    scale = 0.001
+  )
+)
+
+summary(loglogistic_fit)
+
+coef(loglogistic_fit)
+
+AIC(loglogistic_fit)
+
+loglogistic_fit@details$convergence
+
+# Caculate BIC manually 
+n <- length(times)
+
+BIC_loglogistic <-
+  -2 * as.numeric(logLik(loglogistic_fit)) +
+  length(coef(loglogistic_fit)) * log(n)
+
+BIC_loglogistic
+```
+# Plot log logistic
+```{r}
+# Extract fitted parameters
+loglogistic_params <- coef(loglogistic_fit)
+
+# Log-logistic CDF
+pllogis <- function(t, shape, scale) {
+  plogis(
+    log(t),
+    location = log(scale),
+    scale = 1 / shape
+  )
+}
+
+# Calculate predictions
+loglogistic_predictions <- data.frame(
+  time = plot_times[-1]
+) %>%
+  mutate(
+    predicted_prob =
+      pllogis(
+        time,
+        shape = loglogistic_params["shape"],
+        scale = loglogistic_params["scale"]
+      ) -
+      pllogis(
+        time - 2,
+        shape = loglogistic_params["shape"],
+        scale = loglogistic_params["scale"]
+      ),
+    predicted_count = predicted_prob * length(times)
+  )
+
+# Plot
+ggplot() +
+  geom_col(
+    data = observed_counts,
+    aes(x = time, y = observed_count),
+    width = 2,
+    fill = "grey75",
+    color = "black"
+  ) +
+  geom_line(
+    data = loglogistic_predictions,
+    aes(x = time, y = predicted_count),
+    color = "blue",
+    linewidth = 1
+  ) +
+  labs(
+    title = "Log-logistic fit to control germination times",
+    x = "Time to germination (minutes)",
+    y = "Number of spores"
+  ) #+
+  #coord_cartesian(xlim = c(0, 100))
+```
+5. Erlang
+- continuous probability distribution used to model the time required for a specified number of events or stages to occur
+- special case of the gamma distribution in which the shape parameter must be a positive integer
+- two parameters: shape (k) and rate (lamba)
+```{r}
+# Define function
+erlang_nll <- function(rate, shape) {
+
+  if (rate <= 0 || shape < 1 || shape != floor(shape)) {
+    return(1e100)
+  }
+
+  log_S_lower <- pgamma(
+    lower,
+    shape = shape,
+    rate = rate,
+    lower.tail = FALSE,
+    log.p = TRUE
+  )
+
+  log_S_upper <- pgamma(
+    upper,
+    shape = shape,
+    rate = rate,
+    lower.tail = FALSE,
+    log.p = TRUE
+  )
+
+  delta <- log_S_upper - log_S_lower
+
+  log_prob <- log_S_lower + log(-expm1(delta))
+
+  if (any(!is.finite(log_prob))) {
+    return(1e100)
+  }
+
+  -sum(log_prob)
+}
+
+# Fit 
+library(bbmle)
+
+erlang_fits <- lapply(1:20, function(k) {
+
+  mle2(
+    erlang_nll,
+    start = list(rate = k / mean(times)),
+    fixed = list(shape = k),
+    method = "L-BFGS-B",
+    lower = c(rate = 0.000001)
+  )
+
+})
+
+# Results
+erlang_results <- data.frame(
+  shape = 1:20,
+  rate = sapply(erlang_fits, function(fit) {
+    unname(coef(fit)["rate"])
+  }),
+  logLik = sapply(erlang_fits, function(fit) {
+    as.numeric(logLik(fit))
+  })
+) %>%
+  mutate(
+    AIC = -2 * logLik + 4,
+    BIC = -2 * logLik + 2 * log(length(times))
+  )
+
+erlang_results
+```
+# Identify the best fitting erlang and plot 
+```{r}
+best_index <- which.min(erlang_results$AIC)
+
+best_erlang <- erlang_fits[[best_index]]
+
+best_shape <- erlang_results$shape[best_index]
+best_rate <- erlang_results$rate[best_index]
+
+best_shape
+best_rate
+
+# Calcilate predicted germination counts
+# Define 2-minute time intervals
+plot_times <- seq(0, max(times) + 2, by = 2)
+
+# Calculate predicted counts
+erlang_predictions <- data.frame(
+  time = plot_times[-1]
+) %>%
+  mutate(
+    predicted_prob =
+      pgamma(
+        time,
+        shape = best_shape,
+        rate = best_rate
+      ) -
+      pgamma(
+        time - 2,
+        shape = best_shape,
+        rate = best_rate
+      ),
+
+    predicted_count = predicted_prob * length(times)
+  )
+
+# Plot observed vs predicted germ times
+# Observed counts
+observed_counts <- data.frame(
+  time = ifelse(times == 0, 2, times)
+) %>%
+  mutate(time = 2 * ceiling(time / 2)) %>%
+  count(time, name = "observed_count")
+
+# Plot
+erlang_plot <- ggplot() +
+
+  geom_col(
+    data = observed_counts,
+    aes(x = time, y = observed_count),
+    width = 2,
+    fill = "grey75",
+    color = "black"
+  ) +
+
+  geom_line(
+    data = erlang_predictions,
+    aes(x = time, y = predicted_count),
+    color = "blue",
+    linewidth = 1
+  ) +
+
+  labs(
+    title = "Erlang fit to control germination times",
+    x = "Time to germination (minutes)",
+    y = "Number of spores"
+  )
+
+erlang_plot + 
+  coord_cartesian(xlim = c(0, 100))
+```
+6. Discrete Bernoulli 
+- this is not continuous -- instead we will be dividing the experiment into 2 min intervals and during each interval there are two possibile outcomes 
+- We are actually going to use the geometric distribution (becasue we are only dealing with spores that have germinated)
+- SO, each 2 min interval is treated as a bernoulli trial, germination occurs with probability p
+```{r}
+# Germination times
+dt <- 2
+
+intervals <- pmax(1, ceiling(times / dt))
+
+head(data.frame(
+  time = times,
+  interval = intervals
+))
+
+# define geometric 
+geometric_nll <- function(p) {
+
+  if (p <= 0 || p >= 1) {
+    return(1e100)
+  }
+
+  -sum(
+    log(p) +
+    (intervals - 1) * log1p(-p)
+  )
+}
+
+# Fit 
+library(bbmle)
+
+geometric_fit <- mle2(
+  geometric_nll,
+  start = list(p = 0.05),
+  method = "L-BFGS-B",
+  lower = c(p = 0.000001),
+  upper = c(p = 0.999999)
+)
+# Results 
+summary(geometric_fit)
+
+coef(geometric_fit)
+
+AIC(geometric_fit)
+
+geometric_fit@details$convergence
+
+# Manually calculate BIC
+n <- length(intervals)
+
+BIC_geometric <-
+  -2 * as.numeric(logLik(geometric_fit)) +
+  log(n)
+
+BIC_geometric
+```
+Plot 
+```{r}
+library(dplyr)
+library(ggplot2)
+
+p_hat <- unname(coef(geometric_fit)["p"])
+
+geometric_predictions <- data.frame(
+  interval = 1:max(intervals)
+) %>%
+  mutate(
+    time = interval * dt,
+    predicted_prob = dgeom(interval - 1, prob = p_hat),
+    predicted_count = predicted_prob * length(intervals)
+  )
+
+observed_counts <- data.frame(
+  interval = intervals
+) %>%
+  count(interval, name = "observed_count") %>%
+  mutate(time = interval * dt)
+
+geometric_plot <- ggplot() +
+  geom_col(
+    data = observed_counts,
+    aes(x = time, y = observed_count),
+    width = 2,
+    fill = "grey75",
+    color = "black"
+  ) +
+  geom_line(
+    data = geometric_predictions,
+    aes(x = time, y = predicted_count),
+    color = "blue",
+    linewidth = 1
+  ) +
+  labs(
+    title = "Geometric fit to control germination times",
+    x = "Time to germination (minutes)",
+    y = "Number of spores"
+  ) 
+
+geometric_plot +
+  coord_cartesian(xlim = c(0, 100))
+```
+7. Lognormal 
+- The lognormal distribution assumes that the data follows a normal distribution 
+- It contains two parms: (u) meanlog--the mean of log-transformed germination times and (o (theta)) sdlog, the standard deviation of the log-transformed germination times 
+- The log normal distribution is right skewed, which agrees with our observed data, it can also accomodate long tails
+
+# Define interval boundaries
+```{r}
+# Control germination times
+times_control <- times
+
+# Define 2-minute intervals
+upper_control <- ifelse(times_control == 0, 2, times_control)
+lower_control <- pmax(0, upper_control - 2)
+
+# Define negative log-liklihood
+library(bbmle)
+
+lognormal_nll_control <- function(meanlog, sdlog) {
+
+  if (sdlog <= 0) {
+    return(1e100)
+  }
+
+  log_S_lower <- plnorm(
+    lower_control,
+    meanlog = meanlog,
+    sdlog = sdlog,
+    lower.tail = FALSE,
+    log.p = TRUE
+  )
+
+  log_S_upper <- plnorm(
+    upper_control,
+    meanlog = meanlog,
+    sdlog = sdlog,
+    lower.tail = FALSE,
+    log.p = TRUE
+  )
+
+  delta <- log_S_upper - log_S_lower
+
+  log_prob <- log_S_lower +
+    log(-expm1(delta))
+
+  if (any(!is.finite(log_prob))) {
+    return(1e100)
+  }
+
+  -sum(log_prob)
+}
+
+# Fit using MLE
+# Starting values based on positive germination times
+log_times <- log(times_control[times_control > 0])
+
+lognormal_fit_control <- mle2(
+  lognormal_nll_control,
+  start = list(
+    meanlog = mean(log_times),
+    sdlog = sd(log_times)
+  ),
+  method = "L-BFGS-B",
+  lower = c(
+    meanlog = -Inf,
+    sdlog = 0.001
+  )
+)
+
+summary(lognormal_fit_control)
+
+coef(lognormal_fit_control)
+
+AIC(lognormal_fit_control)
+
+BIC(lognormal_fit_control)
+
+lognormal_fit_control@details$convergence
+
+# Manually calculate BIC
+n_control <- length(times_control)
+
+BIC_lognormal_control <-
+  -2 * as.numeric(logLik(lognormal_fit_control)) +
+  length(coef(lognormal_fit_control)) * log(n_control)
+
+BIC_lognormal_control
+```
+
+# Calculate the median germination time based on model
+```{r}
+median_lognormal_control <-
+  exp(coef(lognormal_fit_control)["meanlog"])
+
+median_lognormal_control
+```
+
+# Plot
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Observed counts
+observed_counts_control <- data.frame(
+  time = upper_control
+) %>%
+  count(time, name = "observed_count")
+
+# Fitted parameters
+mu <- coef(lognormal_fit_control)["meanlog"]
+sigma <- coef(lognormal_fit_control)["sdlog"]
+
+# Predicted counts
+lognormal_predictions_control <- data.frame(
+  time = seq(2, max(upper_control), by = 2)
+) %>%
+  mutate(
+    predicted_prob =
+      plnorm(time, meanlog = mu, sdlog = sigma) -
+      plnorm(time - 2, meanlog = mu, sdlog = sigma),
+
+    predicted_count =
+      predicted_prob * length(times_control)
+  )
+
+# Plot
+ggplot() +
+  geom_col(
+    data = observed_counts_control,
+    aes(x = time, y = observed_count),
+    width = 2,
+    fill = "grey75",
+    color = "black"
+  ) +
+  geom_line(
+    data = lognormal_predictions_control,
+    aes(x = time, y = predicted_count),
+    color = "blue",
+    linewidth = 1
+  ) +
+  labs(
+    title = "Log-normal fit to control germination times",
+    x = "Time to germination (minutes)",
+    y = "Number of spores"
+  ) +
+  coord_cartesian(xlim = c(0, 100))
+```
+
+8. Generalized gamma distribution--control spores 
+```{r}
+
+```
+
+
+### PART 3: MODELING VIROSPORE GERMINATION TIMES ###
+1. Filtering out virospores
+```{r}
+library(dplyr)
+library(ggplot2)
+
+viro_data <- fluid.data %>%
+  filter(
+    Infected.control == "infected",
+    germinate == 1,
+    !is.na(time.germinate)
+  )
+
+# Inspect germination times
+summary(viro_data$time.germinate)
+
+hist(
+  viro_data$time.germinate,
+  breaks = 30,
+  main = "Virospore germination times",
+  xlab = "Time to germination (minutes)"
+)
+
+# Examine times
+summary(viro_data$time.germinate)
+
+table(viro_data$time.germinate)
+
+# Extract germination times for virospores
+times_viro <- viro_data$time.germinate
+
+# Check the data
+length(times_viro)
+summary(times_viro)
+
+# Define upper and lower interval boundaries
+upper_viro <- ifelse(
+  times_viro == 0,
+  2,
+  times_viro
+)
+
+lower_viro <- pmax(0, upper_viro - 2)
+
+# Calculate observed virospore germination counts
+library(dplyr)
+library(ggplot2)
+
+observed_counts_viro <- data.frame(
+  time = ifelse(times_viro == 0, 2, times_viro)
+) %>%
+  count(time, name = "observed_count")
+```
+2. Log logistic for virospores
+```{r}
+library(bbmle)
+library(dplyr)
+loglogistic_nll_viro <- function(shape, scale) {
+
+  if (shape <= 0 || scale <= 0) {
+    return(1e100)
+  }
+
+  log_S_lower <- plogis(
+    log(lower_viro),
+    location = log(scale),
+    scale = 1 / shape,
+    lower.tail = FALSE,
+    log.p = TRUE
+  )
+
+  log_S_upper <- plogis(
+    log(upper_viro),
+    location = log(scale),
+    scale = 1 / shape,
+    lower.tail = FALSE,
+    log.p = TRUE
+  )
+
+  delta <- log_S_upper - log_S_lower
+
+  log_prob <- log_S_lower +
+    log(-expm1(delta))
+
+  if (any(!is.finite(log_prob))) {
+    return(1e100)
+  }
+
+  -sum(log_prob)
+}
+# Fit 
+loglogistic_fit_viro <- mle2(
+  loglogistic_nll_viro,
+  start = list(
+    shape = 2,
+    scale = median(times_viro)
+  ),
+  method = "L-BFGS-B",
+  lower = c(
+    shape = 0.001,
+    scale = 0.001
+  )
+)
+
+summary(loglogistic_fit_viro)
+
+coef(loglogistic_fit_viro)
+
+AIC(loglogistic_fit_viro)
+
+loglogistic_fit_viro@details$convergence
+
+# Caculate BIC manually 
+n <- length(times_viro)
+
+BIC_loglogistic_viro <-
+  -2 * as.numeric(logLik(loglogistic_fit_viro)) +
+  length(coef(loglogistic_fit_viro)) * log(n)
+
+BIC_loglogistic_viro
+```
+# Calculate predicted counts from fitted model and plot
+```{r}
+shape_viro <- coef(loglogistic_fit_viro)["shape"]
+scale_viro <- coef(loglogistic_fit_viro)["scale"]
+
+# Create 2-minute time intervals
+loglogistic_predictions_viro <- data.frame(
+  time = seq(2, max(upper_viro), by = 2)
+) %>%
+  mutate(
+    predicted_prob =
+      plogis(
+        log(time),
+        location = log(scale_viro),
+        scale = 1 / shape_viro
+      ) -
+      plogis(
+        log(time - 2),
+        location = log(scale_viro),
+        scale = 1 / shape_viro
+      ),
+
+    predicted_count =
+      predicted_prob * length(times_viro)
+  )
+# Plot 
+ggplot() +
+  geom_col(
+    data = observed_counts_viro,
+    aes(x = time, y = observed_count),
+    width = 2,
+    fill = "grey75",
+    color = "black"
+  ) +
+  geom_line(
+    data = loglogistic_predictions_viro,
+    aes(x = time, y = predicted_count),
+    color = "blue",
+    linewidth = 1
+  ) +
+  labs(
+    title = "Log-logistic fit to virospore germination times",
+    x = "Time to germination (minutes)",
+    y = "Number of virospores"
+  ) +
+  coord_cartesian(xlim = c(0, 100))
+```
+Follow up test to compare control spores to germinated spores
+- Test whether allowing treatment specific parameters improves model fit via liklihood-ratio test
+```{r}
+# Combine germination times from both treatments
+times_combined <- c(times, times_viro)
+
+# Define the 2-minute observation intervals
+upper_combined <- ifelse(
+  times_combined == 0,
+  2,
+  times_combined
+)
+
+lower_combined <- pmax(0, upper_combined - 2)
+
+# Check sample sizes
+length(times)
+length(times_viro)
+length(times_combined)
+
+
+```
+
+
+
+3. Log normal for virospores 
+# Define the virospore interval boundaries 
+```{r}
+upper_viro <- ifelse(times_viro == 0, 2, times_viro)
+lower_viro <- pmax(0, upper_viro - 2)
+
+# Define log-normal negative log liklihood
+lognormal_nll_viro <- function(meanlog, sdlog) {
+
+  if (sdlog <= 0) {
+    return(1e100)
+  }
+
+  log_S_lower <- plnorm(
+    lower_viro,
+    meanlog = meanlog,
+    sdlog = sdlog,
+    lower.tail = FALSE,
+    log.p = TRUE
+  )
+
+  log_S_upper <- plnorm(
+    upper_viro,
+    meanlog = meanlog,
+    sdlog = sdlog,
+    lower.tail = FALSE,
+    log.p = TRUE
+  )
+
+  delta <- log_S_upper - log_S_lower
+
+  log_prob <- log_S_lower +
+    log(-expm1(delta))
+
+  if (any(!is.finite(log_prob))) {
+    return(1e100)
+  }
+
+  -sum(log_prob)
+}
+
+# Fit 
+log_times_viro <- log(times_viro[times_viro > 0])
+
+lognormal_fit_viro <- mle2(
+  lognormal_nll_viro,
+  start = list(
+    meanlog = mean(log_times_viro),
+    sdlog = sd(log_times_viro)
+  ),
+  method = "L-BFGS-B",
+  lower = c(
+    meanlog = -Inf,
+    sdlog = 0.001
+  )
+)
+
+summary(lognormal_fit_viro)
+
+AIC(lognormal_fit_viro)
+
+lognormal_fit_viro@details$convergence
+
+# Calculate median and BIC
+median_lognormal_viro <-
+  exp(coef(lognormal_fit_viro)["meanlog"])
+
+BIC_lognormal_viro <-
+  -2 * as.numeric(logLik(lognormal_fit_viro)) +
+  length(coef(lognormal_fit_viro)) * log(length(times_viro))
+
+median_lognormal_viro
+BIC_lognormal_viro
+```
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Observed counts
+observed_counts_viro <- data.frame(
+  time = upper_viro
+) %>%
+  count(time, name = "observed_count")
+
+# Fitted parameters
+mu <- coef(lognormal_fit_viro)["meanlog"]
+sigma <- coef(lognormal_fit_viro)["sdlog"]
+
+# Predicted counts
+lognormal_predictions_viro <- data.frame(
+  time = seq(2, max(upper_viro), by = 2)
+) %>%
+  mutate(
+    predicted_prob =
+      plnorm(time, meanlog = mu, sdlog = sigma) -
+      plnorm(time - 2, meanlog = mu, sdlog = sigma),
+
+    predicted_count =
+      predicted_prob * length(times_viro)
+  )
+
+# Plot
+ggplot() +
+  geom_col(
+    data = observed_counts_viro,
+    aes(x = time, y = observed_count),
+    width = 2,
+    fill = "grey75",
+    color = "black"
+  ) +
+  geom_line(
+    data = lognormal_predictions_control,
+    aes(x = time, y = predicted_count),
+    color = "blue",
+    linewidth = 1
+  ) +
+  labs(
+    title = "Log-normal fit to virospore germination times",
+    x = "Time to germination (minutes)",
+    y = "Number of spores"
+  ) #+
+  #coord_cartesian(xlim = c(0, 100))
+```
+
+
+
+
+4. Generalized gamma 
+- this distribution has 3 parms: mu which is the location parameter on the log-time scale
+- sigma which controls the spread of germination times
+- Q which controls the distributional shape and skewness (when Q = 0, the gamma reduces to the log-normal distribution)
+# Install package for gamma 
+```{r}
+library(flexsurv)
+library(bbmle)
+```
+# Define the generalized gamma negative log-liklihood
+```{r}
+gengamma_nll_viro <- function(mu, sigma, Q) {
+
+  if (sigma <= 0) {
+    return(1e100)
+  }
+
+  log_S_lower <- pgengamma(
+    lower_viro,
+    mu = mu,
+    sigma = sigma,
+    Q = Q,
+    lower.tail = FALSE,
+    log.p = TRUE
+  )
+
+  log_S_upper <- pgengamma(
+    upper_viro,
+    mu = mu,
+    sigma = sigma,
+    Q = Q,
+    lower.tail = FALSE,
+    log.p = TRUE
+  )
+
+  delta <- log_S_upper - log_S_lower
+
+  log_prob <- log_S_lower +
+    log(-expm1(delta))
+
+  if (any(!is.finite(log_prob))) {
+    return(1e100)
+  }
+
+  -sum(log_prob)
+}
+```
+
+
+# Fit and examine
+```{r}
+gengamma_fit_viro <- mle2(
+  gengamma_nll_viro,
+  start = list(
+    mu = unname(coef(lognormal_fit_viro)["meanlog"]),
+    sigma = unname(coef(lognormal_fit_viro)["sdlog"]),
+    Q = 0.1
+  ),
+  method = "L-BFGS-B",
+  lower = c(
+    mu = -Inf,
+    sigma = 0.001,
+    Q = -10
+  ),
+  upper = c(
+    mu = Inf,
+    sigma = Inf,
+    Q = 10
+  )
+)
+
+summary(gengamma_fit_viro)
+
+coef(gengamma_fit_viro)
+
+AIC(gengamma_fit_viro)
+
+gengamma_fit_viro@details$convergence
+
+# Calculate BIC
+n_viro <- length(times_viro)
+
+BIC_gengamma_viro <-
+  -2 * as.numeric(logLik(gengamma_fit_viro)) +
+  length(coef(gengamma_fit_viro)) * log(n_viro)
+
+BIC_gengamma_viro
+```
+# Plot
+```{r}
+# Observed germination counts
+observed_counts_gengamma_viro <- data.frame(
+  time = ifelse(times_viro == 0, 2, times_viro)
+) %>%
+  count(time, name = "observed_count")
+
+# Extract fitted parameters
+mu_viro <- unname(coef(gengamma_fit_viro)["mu"])
+sigma_viro <- unname(coef(gengamma_fit_viro)["sigma"])
+Q_viro <- unname(coef(gengamma_fit_viro)["Q"])
+
+# Create predicted counts for each 2-minute interval
+gengamma_predictions_viro <- data.frame(
+  time = seq(2, max(upper_viro), by = 2)
+) %>%
+  mutate(
+    predicted_prob =
+      pgengamma(
+        time,
+        mu = mu_viro,
+        sigma = sigma_viro,
+        Q = Q_viro
+      ) -
+      pgengamma(
+        time - 2,
+        mu = mu_viro,
+        sigma = sigma_viro,
+        Q = Q_viro
+      ),
+
+    predicted_count =
+      predicted_prob * length(times_viro)
+  )
+
+ggplot() +
+  geom_col(
+    data = observed_counts_gengamma_viro,
+    aes(x = time, y = observed_count),
+    width = 2,
+    fill = "grey75",
+    color = "black"
+  ) +
+  geom_line(
+    data = gengamma_predictions_viro,
+    aes(x = time, y = predicted_count),
+    color = "blue",
+    linewidth = 1
+  ) +
+  #coord_cartesian(xlim = c(0, 100)) +
+  labs(
+    title = "Generalized gamma fit to virospore germination times",
+    x = "Time to germination (minutes)",
+    y = "Number of virospores"
+  ) 
+```
+5. Ex-Gaussian
+- 3 parameters: mu which is the location of the Gaussian component, sigma which is the standard deviation of the Gaussian component and then tau, which is the exponential component and controls the extended right tail 
+```{r}
+pexgauss <- function(x, mu, sigma, tau) {
+
+  z <- (x - mu) / sigma
+
+  pnorm(z) -
+    exp(
+      -(x - mu) / tau +
+      sigma^2 / (2 * tau^2)
+    ) *
+    pnorm(z - sigma / tau)
+}
+
+# Define the negative log liklihood
+library(bbmle)
+
+exgauss_nll_viro <- function(mu, sigma, tau) {
+
+  if (sigma <= 0 || tau <= 0) {
+    return(1e100)
+  }
+
+  F_lower <- pexgauss(
+    lower_viro,
+    mu = mu,
+    sigma = sigma,
+    tau = tau
+  )
+
+  F_upper <- pexgauss(
+    upper_viro,
+    mu = mu,
+    sigma = sigma,
+    tau = tau
+  )
+
+  prob <- F_upper - F_lower
+
+  if (any(!is.finite(prob)) || any(prob <= 0)) {
+    return(1e100)
+  }
+
+  -sum(log(prob))
+}
+
+# Fit
+
+exgauss_fit_viro <- mle2(
+  exgauss_nll_viro,
+  start = list(
+    mu = 5,
+    sigma = 3,
+    tau = 15
+  ),
+  method = "L-BFGS-B",
+  lower = c(
+    mu = -100,
+    sigma = 0.01,
+    tau = 0.01
+  ),
+  upper = c(
+    mu = 100,
+    sigma = 100,
+    tau = 1000
+  )
+)
+
+summary(exgauss_fit_viro)
+# Check convergence
+exgauss_fit_viro@details$convergence
+
+# AIC and BIC
+AIC(exgauss_fit_viro)
+
+BIC_exgauss_viro <-
+  -2 * as.numeric(logLik(exgauss_fit_viro)) +
+  length(coef(exgauss_fit_viro)) * log(length(times_viro))
+
+BIC_exgauss_viro
+```
+# Plot
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Extract parameters
+mu_ex <- unname(coef(exgauss_fit_viro)["mu"])
+sigma_ex <- unname(coef(exgauss_fit_viro)["sigma"])
+tau_ex <- unname(coef(exgauss_fit_viro)["tau"])
+
+# Observed counts
+observed_exgauss_viro <- data.frame(
+  time = upper_viro
+) %>%
+  count(time, name = "observed_count")
+
+# Predicted counts
+exgauss_predictions_viro <- data.frame(
+  time = seq(2, max(upper_viro), by = 2)
+) %>%
+  mutate(
+    predicted_count = length(times_viro) * (
+      pexgauss(time, mu_ex, sigma_ex, tau_ex) -
+      pexgauss(time - 2, mu_ex, sigma_ex, tau_ex)
+    )
+  )
+
+# Plot
+ggplot() +
+  geom_col(
+    data = observed_exgauss_viro,
+    aes(x = time, y = observed_count),
+    width = 2,
+    fill = "grey75",
+    color = "black"
+  ) +
+  geom_line(
+    data = exgauss_predictions_viro,
+    aes(x = time, y = predicted_count),
+    color = "blue",
+    linewidth = 1
+  ) +
+  #coord_cartesian(xlim = c(0, 100)) +
+  labs(
+    title = "Ex-Gaussian fit to virospore germination times",
+    x = "Time to germination (minutes)",
+    y = "Number of virospores"
+  ) 
+```
+
+# Define the shared log-logistic liklihood
+```{r}
+loglogistic_nll_shared <- function(shape, scale) {
+
+  if (shape <= 0 || scale <= 0) {
+    return(1e100)
+  }
+
+  log_S_lower <- plogis(
+    log(lower_combined),
+    location = log(scale),
+    scale = 1 / shape,
+    lower.tail = FALSE,
+    log.p = TRUE
+  )
+
+  log_S_upper <- plogis(
+    log(upper_combined),
+    location = log(scale),
+    scale = 1 / shape,
+    lower.tail = FALSE,
+    log.p = TRUE
+  )
+
+  delta <- log_S_upper - log_S_lower
+
+  log_prob <- log_S_lower +
+    log(-expm1(delta))
+
+  if (any(!is.finite(log_prob))) {
+    return(1e100)
+  }
+
+  -sum(log_prob)
+}
+```
+
+# Fit shared parameter model
+```{r}
+library(bbmle)
+
+loglogistic_fit_shared <- mle2(
+  loglogistic_nll_shared,
+  start = list(
+    shape = 2,
+    scale = median(times_combined)
+  ),
+  method = "L-BFGS-B",
+  lower = c(
+    shape = 0.001,
+    scale = 0.001
+  )
+)
+
+summary(loglogistic_fit_shared)
+
+coef(loglogistic_fit_shared)
+
+loglogistic_fit_shared@details$convergence
+```
+# Calculate the liklihood-ratio statistic
+```{r}
+# Log-likelihood under the null hypothesis
+LL_null <- as.numeric(
+  logLik(loglogistic_fit_shared)
+)
+
+# Log-likelihood under the alternative hypothesis
+LL_alt <-
+  as.numeric(logLik(loglogistic_fit)) +
+  as.numeric(logLik(loglogistic_fit_viro))
+
+# Likelihood-ratio statistic
+LR <- 2 * (LL_alt - LL_null)
+
+# Difference in parameter count: 4 - 2 = 2
+df <- 2
+
+# P-value
+p_value <- pchisq(
+  LR,
+  df = df,
+  lower.tail = FALSE
+)
+
+data.frame(
+  LL_null = LL_null,
+  LL_alt = LL_alt,
+  LR = LR,
+  df = df,
+  p_value = p_value
+)
+```
+
+
